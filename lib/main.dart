@@ -28,13 +28,13 @@ class GeminiPromptApp extends StatelessWidget {
         fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFF20232A), // 60% - dark neutral
         primaryColor: const Color(0xFF2D9CDB), // 30% - muted blue accent
-        colorScheme: ColorScheme.dark(
-          primary: const Color(0xFF2D9CDB), // accent
-          secondary: const Color(0xFF27AE60), // 10% - vibrant green highlight
-          background: const Color(0xFF20232A),
-          surface: const Color(0xFF232946),
-          onPrimary: const Color(0xFFF4F4F4),
-          onSecondary: const Color(0xFF232946),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF2D9CDB), // accent
+          secondary: Color(0xFF27AE60), // 10% - vibrant green highlight
+          background: Color(0xFF20232A),
+          surface: Color(0xFF232946),
+          onPrimary: Color(0xFFF4F4F4),
+          onSecondary: Color(0xFF232946),
         ),
         inputDecorationTheme: const InputDecorationTheme(
           filled: true,
@@ -53,13 +53,13 @@ class GeminiPromptApp extends StatelessWidget {
           bodyMedium: TextStyle(color: Color(0xFFF4F4F4), fontFamily: 'Roboto'),
           titleLarge: TextStyle(color: Color(0xFF2D9CDB), fontWeight: FontWeight.bold, fontFamily: 'ShareTechMono'),
         ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
+        elevatedButtonTheme: const ElevatedButtonThemeData(
           style: ButtonStyle(
-            backgroundColor: MaterialStatePropertyAll(Color(0xFF27AE60)),
-            foregroundColor: MaterialStatePropertyAll(Color(0xFFF4F4F4)),
-            shape: MaterialStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16)))),
-            elevation: MaterialStatePropertyAll(4),
-            shadowColor: MaterialStatePropertyAll(Color(0xFF2D9CDB)),
+            backgroundColor: WidgetStatePropertyAll(Color(0xFF27AE60)),
+            foregroundColor: WidgetStatePropertyAll(Color(0xFFF4F4F4)),
+            shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16)))),
+            elevation: WidgetStatePropertyAll(4),
+            shadowColor: WidgetStatePropertyAll(Color(0xFF2D9CDB)),
           ),
         ),
         cardTheme: const CardTheme(
@@ -302,6 +302,7 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
   @override
   int _selectedDrawerIndex = 0; // 0: Prompt Generation, 1: Saved Prompts
 
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -340,8 +341,8 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
                 },
               ),
               const Divider(color: Color(0xFF2D9CDB)),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
                 child: Text('Saved Prompts', style: TextStyle(color: Color(0xFF27AE60), fontWeight: FontWeight.bold, fontSize: 16, fontFamily: 'ShareTechMono', letterSpacing: 1)),
               ),
               Expanded(
@@ -443,7 +444,7 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
               margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 0),
               child: ListTile(
                 title: Text(data['basePrompt'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
-                subtitle: Text('What do you want Gemini to do?'),
+                subtitle: const Text('What do you want Gemini to do?'),
                 onTap: () {
                   _editPrompt(doc);
                   setState(() {
@@ -476,6 +477,7 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
     );
   }
 
+  @override
   void initState() {
     super.initState();
   }

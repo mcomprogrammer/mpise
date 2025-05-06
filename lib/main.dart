@@ -48,6 +48,11 @@ class GeminiPromptApp extends StatelessWidget {
             borderRadius: BorderRadius.all(Radius.circular(16)),
           ),
           labelStyle: TextStyle(color: Color(0xFF2D9CDB)),
+          errorBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: Color(0xFF27AE60)),
+            borderRadius: BorderRadius.all(Radius.circular(16)),
+          ),
+          errorStyle: TextStyle(color: Color(0xFF27AE60)),
         ),
         textTheme: const TextTheme(
           bodyMedium: TextStyle(color: Color(0xFFF4F4F4), fontFamily: 'Roboto'),
@@ -90,6 +95,7 @@ class _PromptOptimizerState extends State<PromptOptimizer> {
   final TextEditingController _toneController = TextEditingController();
   final TextEditingController _formatController = TextEditingController();
   final TextEditingController _optimizedPromptController = TextEditingController();
+  final TextEditingController _promptNameController = TextEditingController();
 
   final FirebaseService _firebaseService = FirebaseService();
 
@@ -99,7 +105,7 @@ class _PromptOptimizerState extends State<PromptOptimizer> {
   String? _editingDocId;
 
   // API key - in production, use secure storage methods
-  final String apiKey = 'AIzaSyAEogbvBo0VwGqw3Vr21nzJwS_RMon-gD4'; // Replace with your actual API key
+  final String apiKey = ''; // Replace with your actual API key
 
   @override
   void dispose() {
@@ -109,11 +115,65 @@ class _PromptOptimizerState extends State<PromptOptimizer> {
     _toneController.dispose();
     _formatController.dispose();
     _optimizedPromptController.dispose();
+    _promptNameController.dispose();
     super.dispose();
   }
 
   Future<void> _savePrompt({bool isUpdate = false}) async {
+    final String promptName = _promptNameController.text.isNotEmpty 
+        ? _promptNameController.text 
+        : 'Untitled Prompt';
+    
+    // Check if name already exists in another document
+    bool nameExists = false;
+    String existingDocId = '';
+    
+    if (!isUpdate || (isUpdate && _editingDocId != null)) {
+      QuerySnapshot existingNames = await FirebaseFirestore.instance
+          .collection('prompts')
+          .where('name', isEqualTo: promptName)
+          .get();
+      
+      for (var doc in existingNames.docs) {
+        if (!isUpdate || (isUpdate && doc.id != _editingDocId)) {
+          nameExists = true;
+          existingDocId = doc.id;
+          break;
+        }
+      }
+    }
+    
+    if (nameExists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('A prompt with the name "$promptName" already exists. Please choose a different name.'),
+          backgroundColor: const Color(0xFF27AE60),
+        ),
+      );
+      return;
+    }
+    
+    // If we're editing and the name changed, save as new prompt
+    if (isUpdate && _editingDocId != null) {
+      DocumentSnapshot oldPrompt = await FirebaseFirestore.instance
+          .collection('prompts')
+          .doc(_editingDocId)
+          .get();
+      
+      if (oldPrompt.exists && (oldPrompt.data() as Map<String, dynamic>)['name'] != promptName) {
+        // Name changed, save as new
+        isUpdate = false;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Prompt name changed from "${(oldPrompt.data() as Map<String, dynamic>)['name']}" to "$promptName". Saving as a new prompt.'),
+            backgroundColor: const Color(0xFF2D9CDB),
+          ),
+        );
+      }
+    }
+    
     final promptData = {
+      'name': promptName,
       'basePrompt': _basePromptController.text,
       'purpose': _purposeController.text,
       'context': _contextController.text,
@@ -122,11 +182,13 @@ class _PromptOptimizerState extends State<PromptOptimizer> {
       'optimizedPrompt': _optimizedPromptController.text,
       'timestamp': DateTime.now().toIso8601String(),
     };
+    
     if (isUpdate && _editingDocId != null) {
       await _firebaseService.updatePrompt(_editingDocId!, promptData);
     } else {
       await _firebaseService.addPrompt(promptData);
     }
+    
     setState(() {
       _editingDocId = null;
       _clearFields();
@@ -141,10 +203,12 @@ class _PromptOptimizerState extends State<PromptOptimizer> {
     _toneController.clear();
     _formatController.clear();
     _optimizedPromptController.clear();
+    _promptNameController.clear();
   }
 
   void _editPrompt(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    _promptNameController.text = data['name'] ?? '';
     _basePromptController.text = data['basePrompt'] ?? '';
     _purposeController.text = data['purpose'] ?? '';
     _contextController.text = data['context'] ?? '';
@@ -223,20 +287,126 @@ class _PromptOptimizerState extends State<PromptOptimizer> {
     });
 
     try {
-      // Create a meta-prompt to ask Gemini to optimize the user's prompt
-      final String metaPrompt = '''
-You are a prompt optimization expert. Create an optimized prompt for Gemini AI based on these inputs:
+      // First, use Gemini to check if the information is suitable for creating an optimized prompt
+      final String validationPrompt = '''
+You are an AI prompt evaluation expert. Evaluate ONLY if the base request is sensible and clear enough to work with.
 
-Base request: ${_basePromptController.text}
-Purpose: ${_purposeController.text}
-Context: ${_contextController.text}
-Tone: ${_toneController.text}
-Output format: ${_formatController.text}
+BASE REQUEST: ${_basePromptController.text}
 
-Respond with ONLY the optimized prompt, structured effectively with clear instructions.
+Optional information (these are NOT required to be filled, only evaluate them if provided):
+PURPOSE: ${_purposeController.text.isEmpty ? 'Not specified' : _purposeController.text}
+CONTEXT: ${_contextController.text.isEmpty ? 'Not specified' : _contextController.text}
+TONE: ${_toneController.text.isEmpty ? 'Not specified' : _toneController.text}
+FORMAT: ${_formatController.text.isEmpty ? 'Not specified' : _formatController.text}
+
+IMPORTANT: The optional fields are NOT required. Only check if the base request makes sense.
+Do NOT reject for missing optional fields.
+Only reject if the base request is:
+1. Completely nonsensical
+2. Too vague to understand what is being asked
+3. Empty or just gibberish
+
+Please respond with JSON in this format:
+{
+  "isSuitable": true/false,
+  "feedback": "Only provide feedback if the base request needs improvement"
+}
 ''';
 
-      // Call Gemini API - Using the specified v1beta API endpoint for gemini-2.0-flash
+      // Call Gemini API for validation check
+      final validationResponse = await http.post(
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': validationPrompt}
+              ]
+            }
+          ],
+          'generationConfig': {
+            'temperature': 0.1,
+            'topK': 40,
+            'topP': 0.95,
+            'maxOutputTokens': 1024,
+          }
+        }),
+      );
+
+      if (validationResponse.statusCode == 200) {
+        final data = jsonDecode(validationResponse.body);
+        if (data['candidates'] != null &&
+            data['candidates'].isNotEmpty &&
+            data['candidates'][0]['content'] != null &&
+            data['candidates'][0]['content']['parts'] != null &&
+            data['candidates'][0]['content']['parts'].isNotEmpty &&
+            data['candidates'][0]['content']['parts'][0]['text'] != null) {
+          
+          final validationText = data['candidates'][0]['content']['parts'][0]['text'];
+          
+          // Try to parse the JSON response
+          try {
+            // Extract JSON if wrapped in code blocks
+            String jsonString = validationText;
+            if (jsonString.contains('```json')) {
+              jsonString = jsonString.split('```json')[1].split('```')[0].trim();
+            } else if (jsonString.contains('```')) {
+              jsonString = jsonString.split('```')[1].split('```')[0].trim();
+            }
+            
+            final validationResult = jsonDecode(jsonString);
+            
+            if (validationResult['isSuitable'] == false) {
+              setState(() {
+                _errorMessage = validationResult['feedback'] ?? 'The base request is not clear enough. Please provide a clearer request.';
+                _isLoading = false;
+              });
+              return;
+            }
+          } catch (e) {
+            // If JSON parsing fails, check for indicators of insufficiency
+            if (validationText.toLowerCase().contains('nonsensical') || 
+                validationText.toLowerCase().contains('too vague') || 
+                validationText.toLowerCase().contains('gibberish') ||
+                validationText.toLowerCase().contains('unclear')) {
+              setState(() {
+                _errorMessage = 'The base request is not clear enough. Please provide a clearer request.';
+                _isLoading = false;
+              });
+              return;
+            }
+          }
+        }
+      }
+
+      // If validation passes, proceed with creating the optimized prompt
+      final String metaPrompt = '''
+You are an expert prompt engineer. Create an optimized prompt for Gemini AI based on these inputs:
+
+BASE REQUEST: ${_basePromptController.text}
+
+PURPOSE: ${_purposeController.text.isEmpty ? 'Not specified' : _purposeController.text}
+
+CONTEXT: ${_contextController.text.isEmpty ? 'Not specified' : _contextController.text}
+
+TONE: ${_toneController.text.isEmpty ? 'Not specified' : _toneController.text}
+
+FORMAT: ${_formatController.text.isEmpty ? 'Not specified' : _formatController.text}
+
+Follow these optimization guidelines:
+1. Make the prompt clear, specific, and actionable
+2. Break complex tasks into steps
+3. Include necessary context and constraints
+4. Specify the desired output format and level of detail
+5. Use precise language and avoid ambiguity
+6. Include examples if helpful (based on the provided context)
+7. Consider the strengths and limitations of language models
+
+Respond with ONLY the optimized prompt text. Do not include explanations, introductions, or meta-commentary.
+''';
+
+      // Call Gemini API for the optimized prompt
       final response = await http.post(
         Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey'),
         headers: {'Content-Type': 'application/json'},
@@ -259,7 +429,6 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        // The structure of the response should be the same as before
         if (data['candidates'] != null &&
             data['candidates'].isNotEmpty &&
             data['candidates'][0]['content'] != null &&
@@ -393,7 +562,8 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
             final doc = docs[index];
             final data = doc.data() as Map<String, dynamic>;
             return ListTile(
-              title: Text(data['basePrompt'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+              title: Text(data['name'] ?? 'Untitled Prompt', maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(data['basePrompt'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
               onTap: () {
                 _editPrompt(doc);
                 Navigator.of(context).pop();
@@ -443,8 +613,8 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
             return Card(
               margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 0),
               child: ListTile(
-                title: Text(data['basePrompt'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
-                subtitle: const Text('What do you want Gemini to do?'),
+                title: Text(data['name'] ?? 'Untitled Prompt', maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text(data['basePrompt'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
                 onTap: () {
                   _editPrompt(doc);
                   setState(() {
@@ -488,16 +658,17 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildTextField(
-            'What do you want Gemini to do?',
+            'What do you want Gemini to do',
             _basePromptController,
             maxLines: 3,
+            isRequired: true,
           ),
           _buildTextField(
-            'What is the purpose of this request?',
+            'What is the purpose of this request',
             _purposeController,
           ),
           _buildTextField(
-            'Any specific context or background information?',
+            'Any specific context or background information',
             _contextController,
           ),
           _buildTextField(
@@ -510,11 +681,17 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
           ),
           const SizedBox(height: 20),
           if (_errorMessage.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF232946).withOpacity(0.7),
+                border: Border.all(color: const Color(0xFF27AE60)),
+                borderRadius: BorderRadius.circular(8),
+              ),
               child: Text(
                 _errorMessage,
-                style: const TextStyle(color: Colors.red),
+                style: const TextStyle(color: Color(0xFF27AE60)),
               ),
             ),
           ElevatedButton(
@@ -532,15 +709,19 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, {int maxLines = 1}) {
+  Widget _buildTextField(String label, TextEditingController controller, {int maxLines = 1, bool isRequired = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: TextField(
         controller: controller,
         maxLines: maxLines,
         decoration: InputDecoration(
-          labelText: label,
+          labelText: label + (isRequired ? ' *' : ''),
           border: const OutlineInputBorder(),
+          helperText: isRequired ? 'Required field' : 'Optional field',
+          helperStyle: TextStyle(
+            color: isRequired ? const Color(0xFF27AE60) : const Color(0xFF2D9CDB),
+          ),
         ),
       ),
     );
@@ -590,14 +771,24 @@ Respond with ONLY the optimized prompt, structured effectively with clear instru
           ],
         ),
         const SizedBox(height: 16),
+        if (_optimizedPromptController.text.isNotEmpty)
+          _buildTextField(
+            'Prompt Name',
+            _promptNameController,
+            maxLines: 1,
+            isRequired: true,
+          ),
         ElevatedButton.icon(
           icon: const Icon(Icons.save),
           label: const Text('Save Prompt'),
           onPressed: _optimizedPromptController.text.isNotEmpty ? () async {
-            await _savePrompt();
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Prompt saved!')),
-            );
+            if (_promptNameController.text.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a name for your prompt')),
+              );
+              return;
+            }
+            await _savePrompt(isUpdate: _editingDocId != null);
           } : null,
         ),
       ],
